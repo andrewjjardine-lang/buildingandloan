@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Diocese of London — Building and Loan Fund</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -237,6 +238,8 @@ let sb=null,currentUser=null,ROLE='staff';
 let S={depositRate:2.50,loanRate:4.75,feeBudget:40000,parishes:[],transactions:[],pendingCount:0,assignedParishes:[]};
 let txFilter='All';
 let showInterest=false;
+let dashWidgets=['deposits_over_time','loans_over_time','interest_per_month','investment_balance','deposit_distribution'];
+let chartInstances={};
 
 // ── Role checks ───────────────────────────────────────
 const isAdmin  =()=>ROLE==='admin';
@@ -282,6 +285,7 @@ async function loadProfileAndBoot(){
   renderApp();
   setCrestImages();
   await loadData();
+  await loadDashWidgets();
 }
 
 function showLoading(msg){
@@ -735,7 +739,238 @@ function renderTxTable(){
     <td style="display:flex;gap:4px">${canWrite()?`<button class="btn btn-sm" onclick="openEditTx('${tx.id}')">Edit</button><button class="btn btn-sm btn-danger" onclick="openDelTx('${tx.id}')">Delete</button>`:''}</td>
   </tr>`).join('');
 }
-function refreshAll(){renderMetrics();renderRecentTx();renderParishes();updateRates();}
+
+// ── Dashboard charts ──────────────────────────────────
+
+const WIDGET_DEFS=[
+  {id:'deposits_over_time',  label:'Deposits over time',      icon:'📈', desc:'Monthly deposit balance trend'},
+  {id:'loans_over_time',     label:'Loans over time',         icon:'📉', desc:'Monthly loan balance trend'},
+  {id:'interest_per_month',  label:'Interest per month',      icon:'💰', desc:'Deposit & loan interest earned each month'},
+  {id:'investment_balance',  label:'Investment fund balance',  icon:'🏦', desc:'Quarterly investment snapshots'},
+  {id:'deposit_distribution',label:'Parish deposit share',    icon:'🥧', desc:'Top 10 parishes by deposit balance'},
+];
+
+// Load widget prefs from user_profiles
+async function loadDashWidgets(){
+  try{
+    const{data}=await sb.from('user_profiles').select('dashboard_widgets').eq('id',currentUser.id).single();
+    if(data&&data.dashboard_widgets&&Array.isArray(data.dashboard_widgets)){
+      dashWidgets=data.dashboard_widgets;
+    }
+  }catch(e){}
+  renderDashboardCharts();
+}
+
+async function saveDashWidgets(){
+  try{
+    await sb.from('user_profiles').update({dashboard_widgets:dashWidgets}).eq('id',currentUser.id);
+  }catch(e){}
+}
+
+function toggleWidget(id){
+  if(dashWidgets.includes(id)){
+    dashWidgets=dashWidgets.filter(w=>w!==id);
+  }else{
+    dashWidgets=[...dashWidgets,id];
+  }
+  saveDashWidgets();
+  renderDashboardCharts();
+}
+
+function openWidgetPicker(){
+  const rows=WIDGET_DEFS.map(w=>{
+    const on=dashWidgets.includes(w.id);
+    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:.5px solid var(--border)">'
+      +'<div style="display:flex;align-items:center;gap:10px">'
+      +'<span style="font-size:20px">'+w.icon+'</span>'
+      +'<div><div style="font-size:13px;font-weight:500">'+w.label+'</div>'
+      +'<div style="font-size:11px;color:var(--muted)">'+w.desc+'</div></div>'
+      +'</div>'
+      +'<button class="btn btn-sm'+(on?' btn-primary':'')+'" onclick="toggleWidget(\''+w.id+'\');this.className=\'btn btn-sm\'+(dashWidgets.includes(\''+w.id+'\')?\" btn-primary\":\"\");closeModal();openWidgetPicker();">'
+      +(on?'On':'Off')+'</button>'
+      +'</div>';
+  }).join('');
+  showModal(''
+    +'<div class="mh"><span class="mt">Customise dashboard</span><button class="mx" onclick="closeModal()">x</button></div>'
+    +'<div class="mb">'+rows+'</div>'
+    +'<div class="mf"><button class="btn btn-primary" onclick="closeModal()">Done</button></div>'
+  );
+}
+
+function renderDashboardCharts(){
+  const c=ge('dashboard-charts');if(!c)return;
+
+  // Destroy existing chart instances
+  Object.values(chartInstances).forEach(ch=>{try{ch.destroy();}catch(e){}});
+  chartInstances={};
+
+  if(!dashWidgets.length){
+    c.innerHTML='<div style="padding:20px;text-align:center;color:var(--muted);font-size:13px">'
+      +'No charts selected. <button class="btn btn-sm" onclick="openWidgetPicker()" style="margin-left:8px">Add charts</button></div>';
+    return;
+  }
+
+  // Header with customise button
+  c.innerHTML='<div style="display:flex;justify-content:flex-end;margin-bottom:12px">'
+    +'<button class="btn btn-sm" onclick="openWidgetPicker()">&#9881; Customise dashboard</button>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin-bottom:16px" id="charts-grid"></div>';
+
+  const grid=ge('charts-grid');
+
+  dashWidgets.forEach(wid=>{
+    const def=WIDGET_DEFS.find(d=>d.id===wid);
+    if(!def)return;
+    const panel=document.createElement('div');
+    panel.className='panel';
+    panel.style.padding='16px';
+    panel.innerHTML='<div style="font-size:12px;font-weight:500;margin-bottom:12px;display:flex;align-items:center;gap:6px">'
+      +'<span>'+def.icon+'</span><span>'+def.label+'</span></div>'
+      +'<canvas id="chart-'+wid+'" style="max-height:220px"></canvas>';
+    grid.appendChild(panel);
+    // Build chart after element is in DOM
+    setTimeout(()=>buildChart(wid),0);
+  });
+}
+
+function buildChart(wid){
+  const canvas=ge('chart-'+wid);
+  if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  const blue='rgba(24,95,165,1)',blueFill='rgba(24,95,165,0.15)';
+  const red='rgba(163,45,45,1)',redFill='rgba(163,45,45,0.15)';
+  const green='rgba(59,109,17,1)',greenFill='rgba(59,109,17,0.15)';
+  const purple='rgba(83,74,183,1)';
+
+  if(wid==='deposits_over_time'){
+    const monthly=getMonthlyBalances('deposit');
+    chartInstances[wid]=new Chart(ctx,{
+      type:'line',
+      data:{
+        labels:monthly.map(m=>m.label),
+        datasets:[{label:'Deposit balance',data:monthly.map(m=>m.value),
+          borderColor:blue,backgroundColor:blueFill,fill:true,tension:0.3,pointRadius:3}]
+      },
+      options:chartOpts('$')
+    });
+  }
+  else if(wid==='loans_over_time'){
+    const monthly=getMonthlyBalances('loan');
+    chartInstances[wid]=new Chart(ctx,{
+      type:'line',
+      data:{
+        labels:monthly.map(m=>m.label),
+        datasets:[{label:'Loan balance',data:monthly.map(m=>m.value),
+          borderColor:red,backgroundColor:redFill,fill:true,tension:0.3,pointRadius:3}]
+      },
+      options:chartOpts('$')
+    });
+  }
+  else if(wid==='interest_per_month'){
+    const depInt=getMonthlyInterest('Deposit interest');
+    const loanInt=getMonthlyInterest('Loan interest');
+    const labels=[...new Set([...depInt.map(m=>m.label),...loanInt.map(m=>m.label)])].sort();
+    chartInstances[wid]=new Chart(ctx,{
+      type:'bar',
+      data:{
+        labels,
+        datasets:[
+          {label:'Deposit interest',data:labels.map(l=>(depInt.find(m=>m.label===l)||{value:0}).value),backgroundColor:blueFill,borderColor:blue,borderWidth:1},
+          {label:'Loan interest',data:labels.map(l=>(loanInt.find(m=>m.label===l)||{value:0}).value),backgroundColor:redFill,borderColor:red,borderWidth:1}
+        ]
+      },
+      options:chartOpts('$')
+    });
+  }
+  else if(wid==='investment_balance'){
+    // Use invSnapshots if loaded, otherwise show message
+    if(!invSnapshots||!invSnapshots.length){
+      canvas.parentElement.innerHTML+='<div style="font-size:12px;color:var(--hint);font-style:italic;margin-top:8px">No investment snapshots yet. Add them under External investments.</div>';
+      return;
+    }
+    const sorted=[...invSnapshots].sort((a,b)=>a.snapshot_date.localeCompare(b.snapshot_date));
+    chartInstances[wid]=new Chart(ctx,{
+      type:'line',
+      data:{
+        labels:sorted.map(s=>s.snapshot_date),
+        datasets:[{label:'Investment balance',data:sorted.map(s=>s.balance),
+          borderColor:green,backgroundColor:greenFill,fill:true,tension:0.3,pointRadius:4}]
+      },
+      options:chartOpts('$')
+    });
+  }
+  else if(wid==='deposit_distribution'){
+    const top=[...S.parishes].filter(p=>p.deposit_balance>0)
+      .sort((a,b)=>b.deposit_balance-a.deposit_balance).slice(0,10);
+    if(!top.length){
+      canvas.parentElement.innerHTML+='<div style="font-size:12px;color:var(--hint);font-style:italic;margin-top:8px">No deposit data yet.</div>';
+      return;
+    }
+    const colors=['#185FA5','#3B6D11','#854F0B','#534AB7','#A32D2D','#0C447C','#2E5A0A','#6B3F08','#3D348B','#7A2020'];
+    chartInstances[wid]=new Chart(ctx,{
+      type:'doughnut',
+      data:{
+        labels:top.map(p=>(p.parish_number?'['+p.parish_number+'] ':'')+p.name),
+        datasets:[{data:top.map(p=>p.deposit_balance),backgroundColor:colors,borderWidth:2}]
+      },
+      options:{
+        responsive:true,maintainAspectRatio:true,
+        plugins:{
+          legend:{position:'right',labels:{font:{size:10},boxWidth:12}},
+          tooltip:{callbacks:{label:function(c){return' '+fmt(c.raw);}}}
+        }
+      }
+    });
+  }
+}
+
+function chartOpts(prefix){
+  return{
+    responsive:true,maintainAspectRatio:true,
+    plugins:{
+      legend:{display:true,labels:{font:{size:11},boxWidth:12}},
+      tooltip:{callbacks:{label:function(c){return' '+fmt(c.raw);}}}
+    },
+    scales:{
+      x:{ticks:{font:{size:10},maxRotation:45}},
+      y:{ticks:{font:{size:10},callback:function(v){return'$'+Math.round(v/1000)+'k';}}}
+    }
+  };
+}
+
+function getMonthlyBalances(type){
+  // Walk through transactions chronologically to approximate month-end balances
+  const txs=[...S.transactions].sort((a,b)=>a.tx_date.localeCompare(b.tx_date));
+  if(!txs.length)return[];
+  const monthMap={};
+  let bal=0;
+  txs.forEach(tx=>{
+    const mo=tx.tx_date.slice(0,7); // YYYY-MM
+    if(type==='deposit'){
+      if(['Deposit','Deposit interest','Deposit interest correction'].includes(tx.tx_type))bal=r2(bal+tx.amount);
+      if(['Withdrawal','Deposit interest reversal'].includes(tx.tx_type))bal=r2(bal-tx.amount);
+    }else{
+      if(['Loan disbursement','Loan interest','Loan interest correction'].includes(tx.tx_type))bal=r2(bal+tx.amount);
+      if(['Loan repayment','Loan interest reversal'].includes(tx.tx_type))bal=r2(bal-tx.amount);
+    }
+    monthMap[mo]=bal;
+  });
+  // Only show last 24 months
+  const months=Object.keys(monthMap).sort().slice(-24);
+  return months.map(m=>({label:m,value:monthMap[m]}));
+}
+
+function getMonthlyInterest(txType){
+  const monthMap={};
+  S.transactions.filter(t=>t.tx_type===txType).forEach(t=>{
+    const mo=t.tx_date.slice(0,7);
+    monthMap[mo]=(monthMap[mo]||0)+t.amount;
+  });
+  const months=Object.keys(monthMap).sort().slice(-24);
+  return months.map(m=>({label:m,value:r2(monthMap[m])}));
+}
+
+function refreshAll(){renderMetrics();renderRecentTx();renderParishes();updateRates();renderDashboardCharts();}
 
 // ── Approvals ─────────────────────────────────────────
 async function loadApprovals(){
@@ -1928,6 +2163,7 @@ function renderApp(){
       <div class="content">
         <div class="page active" id="page-dashboard">
           <div class="metrics" id="metrics-grid"></div>
+          <div id="dashboard-charts"></div>
           <div class="panel">
             <div class="panel-header"><span class="panel-title">Recent transactions</span><button class="btn" onclick="showPage('transactions',null)">View all</button></div>
             <table><thead><tr><th>Date</th><th>Parish</th><th>Type</th><th>Amount</th><th>Note</th></tr></thead><tbody id="recent-tx-body"></tbody></table>
