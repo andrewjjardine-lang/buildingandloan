@@ -1510,6 +1510,52 @@ async function generateConsolidated(){
     +'</div>';
 }
 
+// ── Admin fees page ───────────────────────────────────
+async function loadAdminFeesPage(){
+  const c=ge('adminfees-content');if(!c)return;
+  c.innerHTML='<div style="padding:20px;color:var(--muted);font-size:13px">Loading...</div>';
+  try{
+    const{data:fees}=await sb.from('investment_fees').select('*').order('fee_date',{ascending:false});
+    invFees=fees||[];
+    renderAdminFeesPage();
+  }catch(e){
+    ge('adminfees-content').innerHTML='<div class="warn">Could not load fee data: '+e.message+'</div>';
+  }
+}
+
+function renderAdminFeesPage(){
+  const c=ge('adminfees-content');if(!c)return;
+  const thisYear=new Date().getFullYear();
+  const feesThisYear=invFees.filter(f=>f.fee_date.startsWith(thisYear+'')).reduce((s,f)=>s+f.amount,0);
+  const feesTotal=invFees.reduce((s,f)=>s+f.amount,0);
+
+  const feeRows=invFees.map(f=>
+    '<tr>'
+    +'<td>'+f.fee_date+'</td>'
+    +'<td style="font-variant-numeric:tabular-nums;color:var(--red)">'+fmt(f.amount)+'</td>'
+    +'<td style="font-size:11px;color:var(--muted)">'+(f.note||'')+'</td>'
+    +'<td style="font-size:11px;color:var(--hint)">'+(f.created_by||'')+'</td>'
+    +(isAdmin()?'<td><button class="btn btn-sm btn-danger" onclick="deleteFee(''+f.id+'')">Delete</button></td>':'')
+    +'</tr>'
+  ).join('');
+
+  c.innerHTML=''
+    +'<div class="metrics" style="margin-bottom:20px">'
+    +'<div class="metric"><div class="metric-label">Fees this year</div><div class="metric-value" style="color:var(--red)">'+fmt(feesThisYear)+'</div><div class="metric-sub">'+invFees.filter(f=>f.fee_date.startsWith(thisYear+'')).length+' charges in '+thisYear+'</div></div>'
+    +'<div class="metric"><div class="metric-label">All-time total</div><div class="metric-value" style="color:var(--red)">'+fmt(feesTotal)+'</div><div class="metric-sub">'+invFees.length+' total charges</div></div>'
+    +'<div class="metric"><div class="metric-label">Annual target</div><div class="metric-value">'+fmt(40000)+'</div><div class="metric-sub">~$10,000 per quarter</div></div>'
+    +'<div class="metric"><div class="metric-label">Remaining this year</div><div class="metric-value" style="color:'+(40000-feesThisYear>0?'var(--amber)':'var(--green)')+'">'+fmt(Math.max(0,40000-feesThisYear))+'</div><div class="metric-sub">'+(40000-feesThisYear<=0?'Target met':'To reach $40,000 target')+'</div></div>'
+    +'</div>'
+    +'<div class="panel">'
+    +'<div class="panel-header"><span class="panel-title">Admin fee charges</span>'
+    +(isAdmin()?'<button class="btn btn-primary btn-sm" onclick="openAddFee()">+ Charge fee</button>':'')
+    +'</div>'
+    +(invFees.length
+      ?'<table><thead><tr><th>Date</th><th>Amount</th><th>Note</th><th>Posted by</th>'+(isAdmin()?'<th></th>':'')+'</tr></thead><tbody>'+feeRows+'</tbody></table>'
+      :'<div class="empty">No admin fees recorded yet.</div>')
+    +'</div>';
+}
+
 // ── External investment fund ──────────────────────────
 let invSnapshots=[], invFees=[];
 
@@ -1586,16 +1632,6 @@ function renderInvestmentPage(){
       +'</tr>';
   }).join('');
 
-  // ── Fee history table ──────────────────────────────
-  const feeRows=invFees.map(f=>
-    '<tr>'
-    +'<td>'+f.fee_date+'</td>'
-    +'<td style="font-variant-numeric:tabular-nums;color:var(--red)">'+fmt(f.amount)+'</td>'
-    +'<td style="font-size:11px;color:var(--muted)">'+(f.note||'')+'</td>'
-    +(isAdmin()?'<td><button class="btn btn-sm btn-danger" onclick="deleteFee(\''+f.id+'\')">Delete</button></td>':'')
-    +'</tr>'
-  ).join('');
-
   c.innerHTML=''
     // ── Metrics ───────────────────────────────────────
     +'<div class="metrics" style="margin-bottom:20px">'
@@ -1606,7 +1642,7 @@ function renderInvestmentPage(){
     +'</div>'
     +'<div class="metrics" style="margin-bottom:20px">'
     +'<div class="metric"><div class="metric-label">5-year growth</div><div class="metric-value" style="font-size:16px">'+chg(fiveDollar,fivePct)+'</div><div class="metric-sub">'+(fiveSnap?'From '+fiveSnap.snapshot_date:'Need data from '+fiveYearsAgo)+'</div></div>'
-    +'<div class="metric"><div class="metric-label">Admin fees this year</div><div class="metric-value" style="font-size:16px;color:var(--red)">'+fmt(feesThisYear)+'</div><div class="metric-sub">'+invFees.filter(f=>f.fee_date.startsWith(thisYear+'')).length+' charges in '+thisYear+'</div></div>'
+
     +'<div class="metric"></div><div class="metric"></div>'
     +'</div>'
 
@@ -1620,15 +1656,7 @@ function renderInvestmentPage(){
       :'<div class="empty">No snapshots yet. Add your first quarterly balance.</div>')
     +'</div>'
 
-    // ── Admin fees ─────────────────────────────────────
-    +'<div class="panel">'
-    +'<div class="panel-header"><span class="panel-title">Admin fee charges</span>'
-    +(isAdmin()?'<button class="btn btn-primary btn-sm" onclick="openAddFee()">+ Charge fee</button>':'')
-    +'</div>'
-    +(invFees.length
-      ?'<table><thead><tr><th>Date</th><th>Amount</th><th>Note</th>'+(isAdmin()?'<th></th>':'')+'</tr></thead><tbody>'+feeRows+'</tbody></table>'
-      :'<div class="empty">No admin fees recorded yet.</div>')
-    +'</div>';
+  ;
 }
 
 function openAddSnapshot(){
@@ -1719,11 +1747,12 @@ function showPage(name,btn){
   ge('page-'+name).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  const titles={dashboard:'Dashboard',parishes:'Parishes',transactions:'Transactions',statements:'Statements',consolidated:'Consolidated fund report',investment:'External investment fund',accrual:'Daily accrual',accruallog:'Accrual log',correction:'Interest correction',approvals:'Change requests',users:'User management',import:'Import data',setup:'Setup & backups'};
+  const titles={dashboard:'Dashboard',parishes:'Parishes',transactions:'Transactions',statements:'Statements',consolidated:'Consolidated fund report',investment:'External investment fund',adminfees:'Admin fees',accrual:'Daily accrual',accruallog:'Accrual log',correction:'Interest correction',approvals:'Change requests',users:'User management',import:'Import data',setup:'Setup & backups'};
   const t=ge('page-title');if(t)t.textContent=titles[name]||name;
   if(name==='statements')populateStmt();
   if(name==='consolidated')renderConsolidated();
   if(name==='investment'){if(isParish()){toast('Access restricted.','error');return;}loadInvestmentPage();}
+  if(name==='adminfees'){if(isParish()){toast('Access restricted.','error');return;}loadAdminFeesPage();}
   if(name==='transactions'){const c=ge('tx-filters');if(c){c.innerHTML='';renderTxFilters();}renderTxTable();}
   if(name==='accrual'){ge('accrual-date').value=today();ge('accrual-result').innerHTML='';}
   if(name==='accruallog')loadAccrualLog();
@@ -1777,6 +1806,7 @@ function renderApp(){
         <button class="nav-item" onclick="showPage('statements',this)"><span class="nav-dot"></span>Statements</button>
         <button class="nav-item" onclick="showPage('consolidated',this)"><span class="nav-dot"></span>Consolidated report</button>
         ${!isParish()?`<button class="nav-item" onclick="showPage('investment',this)"><span class="nav-dot"></span>External investments</button>`:''}
+        ${!isParish()?`<button class="nav-item" onclick="showPage('adminfees',this)"><span class="nav-dot"></span>Admin fees</button>`:''}
       </div>
       ${adminSection}
       <div class="rates-box">
@@ -1873,6 +1903,7 @@ function renderApp(){
         </div>
         <div class="page" id="page-consolidated"><div id="consolidated-content"></div></div>
         <div class="page" id="page-investment"><div id="investment-content"></div></div>
+        <div class="page" id="page-adminfees"><div id="adminfees-content"></div></div>
         <div class="page" id="page-accruallog">
           <div id="accruallog-content"></div>
         </div>
