@@ -1596,7 +1596,7 @@ function renderAdminFeesPage(){
     +'<td style="font-variant-numeric:tabular-nums;color:var(--red)">'+fmt(f.amount)+'</td>'
     +'<td style="font-size:11px;color:var(--muted)">'+(f.note||'')+'</td>'
     +'<td style="font-size:11px;color:var(--hint)">'+(f.created_by||'')+'</td>'
-    +(isAdmin()?'<td><button class="btn btn-sm btn-danger" onclick="deleteFee(''+f.id+'')">Delete</button></td>':'')
+    +(isAdmin()?'<td><button class="btn btn-sm btn-danger" onclick="deleteFee('\''+f.id+'\'')">Delete</button></td>':'')
     +'</tr>'
   ).join('');
 
