@@ -280,6 +280,7 @@ async function loadProfileAndBoot(){
   }
   // NOW build the UI with the correct role
   renderApp();
+  setCrestImages();
   await loadData();
 }
 
@@ -2005,6 +2006,7 @@ async function submitSignIn(){
     await doSignIn(email,pass);
     await loadProfileAndBoot(); // fetch role THEN render
   }catch(e){showAuthErr(e.message);}
+  setCrestImages();
 }
 function showAuthErr(msg){const e=ge('auth-err');if(!e)return;e.textContent=msg;e.style.display='block';}
 
@@ -2028,8 +2030,8 @@ async function boot(){
     renderAuth();
   }
 }
-// Set crest images from the single hidden source
-(function(){
+// Set crest images from the single hidden source — runs after DOM ready
+function setCrestImages(){
   var src=document.getElementById('crest-src');
   if(!src)return;
   var url=src.src;
@@ -2037,7 +2039,8 @@ async function boot(){
     var el=document.getElementById(id);
     if(el)el.src=url;
   });
-})();
+}
+document.addEventListener('DOMContentLoaded',setCrestImages);
 boot();
 </script>
 </body>
