@@ -234,7 +234,7 @@ const txColor=type=>{
 
 // ── State ─────────────────────────────────────────────
 let sb=null,currentUser=null,ROLE='staff';
-let S={depositRate:2.50,loanRate:4.75,parishes:[],transactions:[],pendingCount:0,assignedParishes:[]};
+let S={depositRate:2.50,loanRate:4.75,feeBudget:40000,parishes:[],transactions:[],pendingCount:0,assignedParishes:[]};
 let txFilter='All';
 let showInterest=false;
 
@@ -318,8 +318,10 @@ async function loadData(){
     if(settings){
       const dr=settings.find(s=>s.key==='deposit_rate');
       const lr=settings.find(s=>s.key==='loan_rate');
+      const fb=settings.find(s=>s.key==='fee_budget');
       if(dr)S.depositRate=parseFloat(dr.value)||2.50;
       if(lr)S.loanRate=parseFloat(lr.value)||4.75;
+      if(fb)S.feeBudget=parseFloat(fb.value)||40000;
     }
 
     if(isAdmin()){
@@ -1601,12 +1603,14 @@ function renderAdminFeesPage(){
     +'</tr>'
   ).join('');
 
+  const budget=S.feeBudget||40000;
+  const remaining=r2(budget-feesThisYear);
   c.innerHTML=''
     +'<div class="metrics" style="margin-bottom:20px">'
-    +'<div class="metric"><div class="metric-label">Fees this year</div><div class="metric-value" style="color:var(--red)">'+fmt(feesThisYear)+'</div><div class="metric-sub">'+invFees.filter(f=>f.fee_date.startsWith(thisYear+'')).length+' charges in '+thisYear+'</div></div>'
-    +'<div class="metric"><div class="metric-label">All-time total</div><div class="metric-value" style="color:var(--red)">'+fmt(feesTotal)+'</div><div class="metric-sub">'+invFees.length+' total charges</div></div>'
-    +'<div class="metric"><div class="metric-label">Annual target</div><div class="metric-value">'+fmt(40000)+'</div><div class="metric-sub">~$10,000 per quarter</div></div>'
-    +'<div class="metric"><div class="metric-label">Remaining this year</div><div class="metric-value" style="color:'+(40000-feesThisYear>0?'var(--amber)':'var(--green)')+'">'+fmt(Math.max(0,40000-feesThisYear))+'</div><div class="metric-sub">'+(40000-feesThisYear<=0?'Target met':'To reach $40,000 target')+'</div></div>'
+    +'<div class="metric"><div class="metric-label">Fees charged this year</div><div class="metric-value" style="color:var(--red)">'+fmt(feesThisYear)+'</div><div class="metric-sub">'+invFees.filter(f=>f.fee_date.startsWith(thisYear+'')).length+' charges in '+thisYear+'</div></div>'
+    +'<div class="metric"><div class="metric-label">Annual budget</div><div class="metric-value">'+fmt(budget)+'</div><div class="metric-sub">'+(isAdmin()?'<button class="btn btn-sm" style="margin-top:4px" onclick="openEditFeeBudget()">Edit budget</button>':'Set by admin')+'</div></div>'
+    +'<div class="metric"><div class="metric-label">Remaining this year</div><div class="metric-value" style="color:'+(remaining>0?'var(--amber)':'var(--green)')+'">'+fmt(Math.max(0,remaining))+'</div><div class="metric-sub">'+(remaining<=0?'Budget met':'To reach budget')+'</div></div>'
+    +'<div class="metric"></div>'
     +'</div>'
     +'<div class="panel">'
     +'<div class="panel-header"><span class="panel-title">Admin fee charges</span>'
@@ -1758,6 +1762,32 @@ async function deleteSnapshot(id){
     if(error)throw error;
     invSnapshots=invSnapshots.filter(s=>s.id!==id);
     renderInvestmentPage();toast('Snapshot deleted.','ok');
+  }catch(e){toast('Error: '+e.message,'error');}
+  setSyncing(false);
+}
+
+async function openEditFeeBudget(){
+  if(!isAdmin())return;
+  showModal(''
+    +'<div class="mh"><span class="mt">Edit annual fee budget</span><button class="mx" onclick="closeModal()">x</button></div>'
+    +'<div class="mb">'
+    +'<div class="info">This sets the annual admin fee budget shown on the Admin fees page.</div>'
+    +'<div class="form-row"><label class="lbl">Annual budget ($)</label><input type="number" class="inp" id="budget-amt" value="'+S.feeBudget+'" step="0.01" min="0"></div>'
+    +'</div>'
+    +'<div class="mf"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveFeeBudget()">Save</button></div>'
+  );
+}
+
+async function saveFeeBudget(){
+  const amt=parseFloat(ge('budget-amt').value);
+  if(isNaN(amt)||amt<0){alert('Please enter a valid amount.');return;}
+  setSyncing(true);
+  try{
+    await sb.from('settings').upsert({key:'fee_budget',value:String(r2(amt))},{onConflict:'key'});
+    S.feeBudget=r2(amt);
+    closeModal();
+    renderAdminFeesPage();
+    toast('Budget updated.','ok');
   }catch(e){toast('Error: '+e.message,'error');}
   setSyncing(false);
 }
@@ -1998,6 +2028,7 @@ function renderAuth(){
       <div style="margin-top:20px;padding-top:16px;border-top:.5px solid var(--border);font-size:11px;color:var(--hint);text-align:center">Accounts are created by your administrator</div>
     </div>
   </div>`;
+  setCrestImages();
 }
 async function submitSignIn(){
   const email=ge('si-email').value.trim(),pass=ge('si-pass').value;
