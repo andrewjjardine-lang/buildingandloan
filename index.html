@@ -1411,13 +1411,15 @@ async function generateConsolidated(){
   const loanDisb=(periodTxs||[]).filter(t=>txIs(t,'Loan disbursement')).reduce((s,t)=>s+t.amount,0);
   const loanRepay=(periodTxs||[]).filter(t=>txIs(t,'Loan repayment')).reduce((s,t)=>s+t.amount,0);
 
-  // External investment in period
-  const{data:funds}=await sb.from('investment_fund').select('*').eq('is_active',true);
-  const{data:invTxs}=await sb.from('investment_transactions').select('*').gte('tx_date',from).lte('tx_date',to).order('tx_date',{ascending:false});
-  const totalInvested=(funds||[]).reduce((s,f)=>s+f.current_balance,0);
-  const invIncome=(invTxs||[]).filter(t=>t.tx_type==='Income').reduce((s,t)=>s+t.amount,0);
-  const invDeposits=(invTxs||[]).filter(t=>t.tx_type==='Deposit').reduce((s,t)=>s+t.amount,0);
-  const invWithdrawals=(invTxs||[]).filter(t=>t.tx_type==='Withdrawal').reduce((s,t)=>s+t.amount,0);
+  // External investment fund — use latest snapshot for current balance
+  const{data:allSnaps}=await sb.from('investment_snapshots').select('*').order('snapshot_date',{ascending:false});
+  const latestSnap=(allSnaps||[])[0]||null;
+  const totalInvested=latestSnap?latestSnap.balance:0;
+  // Snapshots in period
+  const snapsInPeriod=(allSnaps||[]).filter(s=>s.snapshot_date>=from&&s.snapshot_date<=to);
+  // Fees in period
+  const{data:feesInPeriod}=await sb.from('investment_fees').select('*').gte('fee_date',from).lte('fee_date',to).order('fee_date');
+  const totalFeesInPeriod=(feesInPeriod||[]).reduce((s,f)=>s+f.amount,0);
 
   // Per-parish breakdown sorted by parish number
   const parishRows=[...S.parishes].sort((a,b)=>{
@@ -1443,28 +1445,6 @@ async function generateConsolidated(){
       +'<td style="font-size:11px;color:var(--muted)">'+effDep+' / '+effLoan+'</td>'
       +'</tr>';
   }).join('');
-
-  // Build tranche rows
-  const trancheRows=(funds||[]).map(f=>
-    '<tr>'
-    +'<td style="font-size:12px;padding:5px 0;color:var(--text)">'+f.name+'<br><span style="font-size:10px;color:var(--hint)">'+f.fund_type+(f.institution?' \u00b7 '+f.institution:'')+'</span></td>'
-    +'<td style="font-size:12px;padding:5px 0;text-align:right;font-variant-numeric:tabular-nums">'+fmt(f.current_balance)+'</td>'
-    +'</tr>'
-  ).join('');
-
-  const trancheSection=(funds||[]).length
-    ?'<div style="font-size:11px;font-weight:600;color:var(--hint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Tranches</div>'
-     +'<table style="width:100%"><thead><tr><th style="font-size:11px;padding:4px 0;text-align:left;color:var(--muted)">Fund / tranche</th><th style="font-size:11px;padding:4px 0;text-align:right;color:var(--muted)">Balance</th></tr></thead><tbody>'+trancheRows+'</tbody></table>'
-    :'<div style="font-size:12px;color:var(--hint);font-style:italic">No investment tranches recorded yet. Add them under External investments in the sidebar.</div>';
-
-  const invActivitySection=(invTxs||[]).length
-    ?'<div style="font-size:11px;font-weight:600;color:var(--hint);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px">Activity in period</div>'
-     +'<table style="width:100%">'
-     +'<tr><td style="font-size:12px;padding:4px 0;color:var(--muted)">Income received</td><td style="font-size:12px;text-align:right;font-variant-numeric:tabular-nums;color:var(--green)">'+fmt(invIncome)+'</td></tr>'
-     +'<tr><td style="font-size:12px;padding:4px 0;color:var(--muted)">Deposits to fund</td><td style="font-size:12px;text-align:right;font-variant-numeric:tabular-nums">'+fmt(invDeposits)+'</td></tr>'
-     +'<tr><td style="font-size:12px;padding:4px 0;color:var(--muted)">Withdrawals from fund</td><td style="font-size:12px;text-align:right;font-variant-numeric:tabular-nums;color:var(--red)">('+fmt(invWithdrawals)+')</td></tr>'
-     +'</table>'
-    :'';
 
   out.innerHTML=''
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">'
@@ -1499,11 +1479,15 @@ async function generateConsolidated(){
     +'<div class="panel-header"><span class="panel-title">External investment fund</span></div>'
     +'<div style="padding:16px">'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">'
-    +'<div class="metric"><div class="metric-label">Total invested</div><div class="metric-value" style="font-size:16px;color:var(--blue)">'+fmt(totalInvested)+'</div><div class="metric-sub">'+((funds||[]).length)+' tranche'+((funds||[]).length!==1?'s':'')+'</div></div>'
-    +'<div class="metric"><div class="metric-label">Income in period</div><div class="metric-value" style="font-size:16px;color:var(--green)">'+fmt(invIncome)+'</div><div class="metric-sub">Bonds, money market etc.</div></div>'
+    +'<div class="metric"><div class="metric-label">Current balance</div><div class="metric-value" style="font-size:16px;color:var(--blue)">'+fmt(totalInvested)+'</div><div class="metric-sub">'+(latestSnap?'As of '+latestSnap.snapshot_date:'No snapshots recorded')+'</div></div>'
+    +'<div class="metric"><div class="metric-label">Admin fees in period</div><div class="metric-value" style="font-size:16px;color:var(--red)">'+fmt(totalFeesInPeriod)+'</div><div class="metric-sub">'+((feesInPeriod||[]).length)+' charge'+((feesInPeriod||[]).length!==1?'s':'')+'</div></div>'
     +'</div>'
-    +trancheSection
-    +invActivitySection
+    +(snapsInPeriod.length
+      ?'<div style="font-size:11px;font-weight:600;color:var(--hint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Snapshots in period</div>'
+       +'<table style="width:100%"><thead><tr><th style="font-size:11px;padding:4px 0;text-align:left;color:var(--muted)">Date</th><th style="font-size:11px;padding:4px 0;text-align:right;color:var(--muted)">Balance</th><th style="font-size:11px;padding:4px 0;color:var(--muted)">Note</th></tr></thead>'
+       +'<tbody>'+snapsInPeriod.map(s=>'<tr><td style="font-size:12px;padding:5px 0">'+s.snapshot_date+'</td><td style="font-size:12px;padding:5px 0;text-align:right;font-variant-numeric:tabular-nums">'+fmt(s.balance)+'</td><td style="font-size:11px;color:var(--muted);padding:5px 0">'+(s.note||'')+'</td></tr>').join('')
+       +'</tbody></table>'
+      :'<div style="font-size:12px;color:var(--hint);font-style:italic">No snapshots recorded in this period.</div>')
     +'</div></div>'
     +'</div>'
 
@@ -1527,275 +1511,206 @@ async function generateConsolidated(){
 }
 
 // ── External investment fund ──────────────────────────
-let invFunds=[], invTxAll=[];
+let invSnapshots=[], invFees=[];
 
 async function loadInvestmentPage(){
   const c=ge('investment-content');if(!c)return;
-  c.innerHTML='<div style="padding:20px;color:var(--muted);font-size:13px">Loading…</div>';
+  c.innerHTML='<div style="padding:20px;color:var(--muted);font-size:13px">Loading...</div>';
   try{
-    const{data:funds}=await sb.from('investment_fund').select('*').order('name');
-    const{data:txs}=await sb.from('investment_transactions').select('*').order('tx_date',{ascending:false}).limit(500);
-    invFunds=funds||[];invTxAll=txs||[];
+    const{data:snaps}=await sb.from('investment_snapshots').select('*').order('snapshot_date',{ascending:false});
+    const{data:fees}=await sb.from('investment_fees').select('*').order('fee_date',{ascending:false});
+    invSnapshots=snaps||[];
+    invFees=fees||[];
     renderInvestmentPage();
   }catch(e){
-    ge('investment-content').innerHTML=`<div class="warn">Could not load investment data. Make sure you have run the SQL to create the investment_fund and investment_transactions tables.</div>`;
+    ge('investment-content').innerHTML='<div class="warn">Could not load investment data: '+e.message+'</div>';
   }
 }
 
 function renderInvestmentPage(){
   const c=ge('investment-content');if(!c)return;
-  const totalInvested=invFunds.filter(f=>f.is_active).reduce((s,f)=>s+f.current_balance,0);
-  c.innerHTML=`
-    <div class="metrics" style="margin-bottom:20px">
-      <div class="metric"><div class="metric-label">Total invested</div><div class="metric-value">${fmt(totalInvested)}</div><div class="metric-sub">${invFunds.filter(f=>f.is_active).length} active tranches</div></div>
-      <div class="metric"><div class="metric-label">Income this month</div><div class="metric-value" style="color:var(--green)">${fmt(invTxAll.filter(t=>t.tx_type==='Income'&&t.tx_date>=new Date(new Date().getFullYear(),new Date().getMonth(),1).toISOString().slice(0,10)).reduce((s,t)=>s+t.amount,0))}</div><div class="metric-sub">Current calendar month</div></div>
-      <div class="metric"><div class="metric-label">Income this year</div><div class="metric-value" style="color:var(--green)">${fmt(invTxAll.filter(t=>t.tx_type==='Income'&&t.tx_date>=new Date().getFullYear()+'-01-01').reduce((s,t)=>s+t.amount,0))}</div><div class="metric-sub">Year to date</div></div>
-      <div class="metric"><div class="metric-label">Tranches</div><div class="metric-value">${invFunds.length}</div><div class="metric-sub">${invFunds.filter(f=>!f.is_active).length} inactive</div></div>
-    </div>
 
-    <!-- Tranches -->
-    <div class="panel" style="margin-bottom:16px">
-      <div class="panel-header">
-        <span class="panel-title">Investment tranches</span>
-        ${isAdmin()?`<button class="btn btn-primary btn-sm" onclick="openAddFund()">+ Add tranche</button>`:''}
-      </div>
-      ${invFunds.length?`<table>
-        <thead><tr><th>Fund / tranche</th><th>Type</th><th>Institution</th><th>Current balance</th><th>Active</th>${isAdmin()?'<th></th>':''}</tr></thead>
-        <tbody>${invFunds.map(f=>`<tr>
-          <td><strong style="font-size:13px">${f.name}</strong>${f.description?`<br><span style="font-size:11px;color:var(--muted)">${f.description}</span>`:''}</td>
-          <td style="font-size:12px;color:var(--muted)">${f.fund_type}</td>
-          <td style="font-size:12px;color:var(--muted)">${f.institution||'—'}</td>
-          <td style="font-variant-numeric:tabular-nums;color:var(--blue);font-weight:500">${fmt(f.current_balance)}</td>
-          <td><span class="badge ${f.is_active?'b-dep':'b-none'}">${f.is_active?'Active':'Inactive'}</span></td>
-          ${isAdmin()?`<td style="display:flex;gap:4px"><button class="btn btn-sm" onclick="openAddInvTx('${f.id}')">+ Entry</button><button class="btn btn-sm" onclick="openEditFund('${f.id}')">Edit</button><button class="btn btn-sm btn-danger" onclick="deleteFund('${f.id}')">Delete</button></td>`:''}
-        </tr>`).join('')}</tbody>
-      </table>`:`<div class="empty">No tranches yet. ${isAdmin()?'Click "+ Add tranche" to record your first investment fund.':''}</div>`}
-    </div>
+  // ── Calculations ──────────────────────────────────
+  const sorted=[...invSnapshots].sort((a,b)=>a.snapshot_date.localeCompare(b.snapshot_date));
+  const latest=sorted[sorted.length-1]||null;
+  const currentBal=latest?latest.balance:0;
+  const thisYear=new Date().getFullYear();
+  const lastYear=thisYear-1;
 
-    <!-- Recent transactions -->
-    <div class="panel">
-      <div class="panel-header"><span class="panel-title">Investment transaction log</span></div>
-      ${invTxAll.length?`<table>
-        <thead><tr><th>Date</th><th>Fund</th><th>Type</th><th>Amount</th><th>Note</th><th></th></tr></thead>
-        <tbody>${invTxAll.slice(0,50).map(t=>{
-          const f=invFunds.find(x=>x.id===t.fund_id);
-          return`<tr>
-            <td>${t.tx_date}</td>
-            <td style="font-size:12px">${f?f.name:'—'}</td>
-            <td style="color:${t.tx_type==='Income'?'var(--green)':t.tx_type==='Withdrawal'?'var(--red)':'var(--blue)'}">${t.tx_type}</td>
-            <td style="font-variant-numeric:tabular-nums">${fmt(t.amount)}</td>
-            <td style="font-size:11px;color:var(--muted)">${t.note||''}</td>
-            <td>${isAdmin()?`<button class="btn btn-sm btn-danger" onclick="deleteInvTx('${t.id}','${t.fund_id}','${t.tx_type}',${t.amount})">Delete</button>`:''}
-            </td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>`:`<div class="empty">No investment transactions yet.</div>`}
-    </div>`;
-}
+  // Previous quarter snapshot
+  const prevSnap=sorted.length>=2?sorted[sorted.length-2]:null;
+  const qDollar=prevSnap?r2(currentBal-prevSnap.balance):null;
+  const qPct=prevSnap&&prevSnap.balance?r2((currentBal-prevSnap.balance)/prevSnap.balance*100):null;
 
-async function deleteInvTx(txId,fundId,txType,amount){
-  if(!isAdmin()){toast('Admin only.','error');return;}
-  if(!confirm('Delete this investment transaction? The fund balance will be reversed.'))return;
-  setSyncing(true);
-  try{
-    // Reverse the balance impact on the fund
-    const fund=invFunds.find(f=>f.id===fundId);
-    if(!fund)throw new Error('Fund not found');
-    let newBal=fund.current_balance;
-    if(txType==='Income'||txType==='Deposit')newBal=r2(newBal-amount);
-    if(txType==='Withdrawal')newBal=r2(newBal+amount);
-    const{error:be}=await sb.from('investment_fund').update({current_balance:newBal}).eq('id',fundId);
-    if(be)throw be;
-    const{error:de}=await sb.from('investment_transactions').delete().eq('id',txId);
-    if(de)throw de;
-    fund.current_balance=newBal;
-    invTxAll=invTxAll.filter(t=>t.id!==txId);
-    renderInvestmentPage();
-    toast('Transaction deleted.','ok');
-  }catch(e){toast('Error: '+e.message,'error');}
-  setSyncing(false);
-}
+  // YTD — first snapshot of this year vs latest
+  const firstThisYear=sorted.filter(s=>s.snapshot_date.startsWith(thisYear+'')).shift()||null;
+  const ytdDollar=firstThisYear?r2(currentBal-firstThisYear.balance):null;
+  const ytdPct=firstThisYear&&firstThisYear.balance?r2((currentBal-firstThisYear.balance)/firstThisYear.balance*100):null;
 
-function openAddFund(){
-  showModal(`
-    <div class="mh"><span class="mt">Add investment tranche</span><button class="mx" onclick="closeModal()">×</button></div>
-    <div class="mb">
-      <div class="form-row"><label class="lbl">Fund / tranche name</label><input class="inp" type="text" id="nf-name" placeholder="e.g. RBC Money Market, Diocese Bond Fund"></div>
-      <div class="form-row-2">
-        <div><label class="lbl">Type</label><select class="sel" id="nf-type">
-          <option>Money market</option><option>Bonds</option><option>GIC</option><option>Equities</option><option>Mixed</option><option>Other</option>
-        </select></div>
-        <div><label class="lbl">Institution</label><input class="inp" type="text" id="nf-inst" placeholder="e.g. RBC, TD, CIBC"></div>
-      </div>
-      <div class="form-row-2">
-        <div><label class="lbl">Opening balance ($)</label><input class="inp" type="number" id="nf-bal" min="0" step="0.01" placeholder="0.00"></div>
-        <div><label class="lbl">Opening date</label><input class="inp" type="date" id="nf-date" value="${today()}"></div>
-      </div>
-      <div class="form-row"><label class="lbl">Description (optional)</label><input class="inp" type="text" id="nf-desc" placeholder="e.g. Short-term bonds maturing Dec 2026"></div>
-    </div>
-    <div class="mf"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="submitAddFund()">Add tranche</button></div>`);
-}
-async function submitAddFund(){
-  const name=ge('nf-name').value.trim(),type=ge('nf-type').value,inst=ge('nf-inst').value.trim(),bal=parseFloat(ge('nf-bal').value)||0,date=ge('nf-date').value,desc=ge('nf-desc').value.trim();
-  if(!name){alert('Please enter a fund name.');return;}
-  setSyncing(true);
-  try{
-    const{data,error}=await sb.from('investment_fund').insert({name,fund_type:type,institution:inst,current_balance:bal,description:desc}).select().single();
-    if(error)throw error;
-    if(bal>0)await sb.from('investment_transactions').insert({fund_id:data.id,tx_date:date,tx_type:'Deposit',amount:bal,note:'Opening balance',created_by:currentUser.email});
-    closeModal();toast('Tranche added.','ok');await loadInvestmentPage();
-  }catch(e){toast('Error: '+e.message,'error');}
-  setSyncing(false);
-}
+  // vs Prior year — last snapshot of last year vs latest
+  const lastOfLastYear=[...sorted].filter(s=>s.snapshot_date.startsWith(lastYear+'')).pop()||null;
+  const pyDollar=lastOfLastYear?r2(currentBal-lastOfLastYear.balance):null;
+  const pyPct=lastOfLastYear&&lastOfLastYear.balance?r2((currentBal-lastOfLastYear.balance)/lastOfLastYear.balance*100):null;
 
-async function deleteFund(fid){
-  if(!isAdmin()){toast('Admin only.','error');return;}
-  const fund=invFunds.find(f=>f.id===fid);
-  if(!fund)return;
-  const txCount=invTxAll.filter(t=>t.fund_id===fid).length;
-  const msg=txCount>0
-    ?'Delete "'+fund.name+'"? This will also delete '+txCount+' transaction'+(txCount!==1?'s':'')+' linked to it. This cannot be undone.'
-    :'Delete "'+fund.name+'"? This cannot be undone.';
-  if(!confirm(msg))return;
-  setSyncing(true);
-  try{
-    // Delete all transactions for this fund first
-    const{error:te}=await sb.from('investment_transactions').delete().eq('fund_id',fid);
-    if(te)throw te;
-    // Then delete the fund itself
-    const{error:fe}=await sb.from('investment_fund').delete().eq('id',fid);
-    if(fe)throw fe;
-    invFunds=invFunds.filter(f=>f.id!==fid);
-    invTxAll=invTxAll.filter(t=>t.fund_id!==fid);
-    renderInvestmentPage();
-    toast('Tranche deleted.','ok');
-  }catch(e){toast('Error: '+e.message,'error');}
-  setSyncing(false);
-}
+  // 5-year — earliest snapshot within 5 years ago vs latest
+  const fiveYearsAgo=(thisYear-5)+'-01-01';
+  const fiveSnap=sorted.filter(s=>s.snapshot_date>=fiveYearsAgo).shift()||null;
+  const fiveDollar=fiveSnap?r2(currentBal-fiveSnap.balance):null;
+  const fivePct=fiveSnap&&fiveSnap.balance?r2((currentBal-fiveSnap.balance)/fiveSnap.balance*100):null;
 
-function openEditFund(fid){
-  const f=invFunds.find(x=>x.id===fid);if(!f)return;
-  showModal(`
-    <div class="mh"><span class="mt">Edit tranche — ${f.name}</span><button class="mx" onclick="closeModal()">×</button></div>
-    <div class="mb">
-      <div class="form-row"><label class="lbl">Name</label><input class="inp" type="text" id="ef-name" value="${f.name}"></div>
-      <div class="form-row-2">
-        <div><label class="lbl">Type</label><select class="sel" id="ef-type">
-          ${['Money market','Bonds','GIC','Equities','Mixed','Other'].map(t=>`<option${t===f.fund_type?' selected':''}>${t}</option>`).join('')}
-        </select></div>
-        <div><label class="lbl">Institution</label><input class="inp" type="text" id="ef-inst" value="${f.institution||''}"></div>
-      </div>
-      <div class="form-row"><label class="lbl">Description</label><input class="inp" type="text" id="ef-desc" value="${f.description||''}"></div>
-      <div class="form-row"><label class="lbl">Notes</label><textarea class="ta" id="ef-notes">${f.notes||''}</textarea></div>
-      <div class="form-row"><label class="lbl">Status</label><select class="sel" id="ef-active"><option value="true"${f.is_active?' selected':''}>Active</option><option value="false"${!f.is_active?' selected':''}>Inactive</option></select></div>
-    </div>
-    <div class="mf"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="submitEditFund('${fid}')">Save</button></div>`);
-}
-async function submitEditFund(fid){
-  const upd={name:ge('ef-name').value.trim(),fund_type:ge('ef-type').value,institution:ge('ef-inst').value.trim(),description:ge('ef-desc').value.trim(),notes:ge('ef-notes').value.trim(),is_active:ge('ef-active').value==='true'};
-  setSyncing(true);
-  try{
-    const{error}=await sb.from('investment_fund').update(upd).eq('id',fid);
-    if(error)throw error;
-    closeModal();toast('Tranche updated.','ok');await loadInvestmentPage();
-  }catch(e){toast('Error: '+e.message,'error');}
-  setSyncing(false);
-}
+  // Total fees this year
+  const feesThisYear=invFees.filter(f=>f.fee_date.startsWith(thisYear+'')).reduce((s,f)=>s+f.amount,0);
 
-function openAddInvTx(fid){
-  const f=invFunds.find(x=>x.id===fid);if(!f)return;
-  showModal(`
-    <div class="mh"><span class="mt">Add entry — ${f.name}</span><button class="mx" onclick="closeModal()">×</button></div>
-    <div class="mb">
-      <div style="background:var(--bg);border-radius:var(--radius);padding:10px 12px;margin-bottom:14px;font-size:12px">
-        Current balance: <strong>${fmt(f.current_balance)}</strong>
-      </div>
-      <div class="form-row"><label class="lbl">Entry type</label><select class="sel" id="it-type">
-        <option value="Income">Income (interest/return received)</option>
-        <option value="Deposit">Deposit (new money added to fund)</option>
-        <option value="Withdrawal">Withdrawal (money taken out)</option>
-        <option value="Adjustment">Adjustment (revaluation or correction)</option>
-      </select></div>
-      <div class="form-row-2">
-        <div><label class="lbl">Amount ($)</label><input class="inp" type="number" id="it-amount" min="0.01" step="0.01" placeholder="0.00"></div>
-        <div><label class="lbl">Date</label><input class="inp" type="date" id="it-date" value="${today()}"></div>
-      </div>
-      <div class="form-row"><label class="lbl">Note</label><input class="inp" type="text" id="it-note" placeholder="e.g. Q1 bond interest, March statement"></div>
-    </div>
-    <div class="mf"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="submitInvTx('${fid}')">Post entry</button></div>`);
-}
-async function submitInvTx(fid){
-  const type=ge('it-type').value,amt=parseFloat(ge('it-amount').value),date=ge('it-date').value,note=ge('it-note').value;
-  if(!type||isNaN(amt)||amt<=0||!date){alert('Please fill in all fields.');return;}
-  setSyncing(true);
-  try{
-    // Post transaction
-    const{error:te}=await sb.from('investment_transactions').insert({fund_id:fid,tx_date:date,tx_type:type,amount:amt,note:note||'',created_by:currentUser.email});
-    if(te)throw te;
-    // Update fund balance
-    const f=invFunds.find(x=>x.id===fid);
-    let newBal=f.current_balance;
-    if(type==='Income'||type==='Deposit')newBal=r2(newBal+amt);
-    if(type==='Withdrawal')newBal=r2(newBal-amt);
-    if(type==='Adjustment')newBal=amt; // adjustment sets balance directly — ask for new balance
-    await sb.from('investment_fund').update({current_balance:newBal}).eq('id',fid);
-    closeModal();toast('Entry posted.','ok');await loadInvestmentPage();
-  }catch(e){toast('Error: '+e.message,'error');}
-  setSyncing(false);
-}
-
-function renderSetupPage(){
-  const c=ge('setup-content');if(!c)return;
-  c.innerHTML=`
-  <div style="max-width:680px">
-    <div class="step-card">
-      <div class="step-card-hd"><div class="step-num" style="background:var(--green)">✓</div><div class="step-card-title">Automatic daily interest accrual (Edge Function)</div></div>
-      <div class="step-card-body">
-        <p style="margin-bottom:12px">Deploy this function to Supabase so interest runs automatically every night at midnight — no manual action needed.</p>
-        <p style="margin-bottom:10px"><strong>Steps:</strong> Supabase → Edge Functions → New function → name it <code>daily-accrual</code> → paste code below → Deploy. Then go to Database → Cron jobs → New cron job → call the function on schedule <code>0 0 * * *</code></p>
-        <div class="code-block">import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-Deno.serve(async () => {
-  const sb = createClient(
-    Deno.env.get('SUPABASE_URL'),
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  )
-  const { data: settings } = await sb.from('settings').select('*')
-  const dep = parseFloat(settings?.find(s=>s.key==='deposit_rate')?.value||'2.5') / 100 / 365
-  const loan = parseFloat(settings?.find(s=>s.key==='loan_rate')?.value||'4.75') / 100 / 365
-  const date = new Date().toISOString().slice(0,10)
-  const { data: parishes } = await sb.from('parishes').select('*')
-  let count = 0
-  for (const p of parishes) {
-    if (p.deposit_balance > 0) {
-      const int = Math.round(p.deposit_balance * dep * 100) / 100
-      if (int > 0) {
-        await sb.from('transactions').insert({ parish_id:p.id, tx_date:date, tx_type:'Deposit interest', amount:int, note:'Auto daily accrual', created_by:'system' })
-        await sb.from('parishes').update({ deposit_balance: Math.round((p.deposit_balance+int)*100)/100 }).eq('id',p.id)
-        count++
-      }
-    }
-    if (p.loan_balance > 0) {
-      const int = Math.round(p.loan_balance * loan * 100) / 100
-      if (int > 0) {
-        await sb.from('transactions').insert({ parish_id:p.id, tx_date:date, tx_type:'Loan interest', amount:int, note:'Auto daily accrual', created_by:'system' })
-        await sb.from('parishes').update({ loan_balance: Math.round((p.loan_balance+int)*100)/100 }).eq('id',p.id)
-        count++
-      }
-    }
+  function chg(dollar,pct){
+    if(dollar===null)return'<span style="color:var(--hint);font-size:12px">No data</span>';
+    const col=dollar>=0?'var(--green)':'var(--red)';
+    const sign=dollar>=0?'+':'';
+    return'<span style="color:'+col+'">'+sign+fmt(dollar)+'</span>'
+      +' <span style="font-size:11px;color:'+col+';">('+sign+pct+'%)</span>';
   }
-  return new Response(JSON.stringify({ date, count }), { headers:{'Content-Type':'application/json'} })
-})</div>
-      </div>
-    </div>
-    <div class="step-card">
-      <div class="step-card-hd"><div class="step-num" style="background:var(--amber)">↓</div><div class="step-card-title">Nightly backups</div></div>
-      <div class="step-card-body">
-        <p style="margin-bottom:10px">Supabase free plan includes <strong>7-day automatic daily backups</strong>. Go to Settings → Backups to view or restore them. No configuration needed.</p>
-        <p>For a longer archive: Table Editor → select a table → Export as CSV. Do this monthly and save to your shared drive. This gives you an offline copy that goes back as far as you keep files.</p>
-      </div>
-    </div>
-  </div>`;
+
+  // ── Snapshot history table ─────────────────────────
+  const snapRows=invSnapshots.map(s=>{
+    const idx=sorted.findIndex(x=>x.id===s.id);
+    const prev=idx>0?sorted[idx-1]:null;
+    const chgDol=prev?r2(s.balance-prev.balance):null;
+    const chgPct=prev&&prev.balance?r2((s.balance-prev.balance)/prev.balance*100):null;
+    return '<tr>'
+      +'<td>'+s.snapshot_date+'</td>'
+      +'<td style="font-variant-numeric:tabular-nums;font-weight:500">'+fmt(s.balance)+'</td>'
+      +'<td>'+chg(chgDol,chgPct)+'</td>'
+      +'<td style="font-size:11px;color:var(--muted)">'+( s.note||'')+'</td>'
+      +(isAdmin()?'<td style="display:flex;gap:4px">'
+        +'<button class="btn btn-sm btn-danger" onclick="deleteSnapshot(\''+s.id+'\')">Delete</button>'
+        +'</td>':'')
+      +'</tr>';
+  }).join('');
+
+  // ── Fee history table ──────────────────────────────
+  const feeRows=invFees.map(f=>
+    '<tr>'
+    +'<td>'+f.fee_date+'</td>'
+    +'<td style="font-variant-numeric:tabular-nums;color:var(--red)">'+fmt(f.amount)+'</td>'
+    +'<td style="font-size:11px;color:var(--muted)">'+(f.note||'')+'</td>'
+    +(isAdmin()?'<td><button class="btn btn-sm btn-danger" onclick="deleteFee(\''+f.id+'\')">Delete</button></td>':'')
+    +'</tr>'
+  ).join('');
+
+  c.innerHTML=''
+    // ── Metrics ───────────────────────────────────────
+    +'<div class="metrics" style="margin-bottom:20px">'
+    +'<div class="metric"><div class="metric-label">Current balance</div><div class="metric-value">'+fmt(currentBal)+'</div><div class="metric-sub">'+(latest?'As of '+latest.snapshot_date:'No snapshots yet')+'</div></div>'
+    +'<div class="metric"><div class="metric-label">vs Previous quarter</div><div class="metric-value" style="font-size:16px">'+chg(qDollar,qPct)+'</div><div class="metric-sub">'+(prevSnap?'From '+prevSnap.snapshot_date:'Need 2+ snapshots')+'</div></div>'
+    +'<div class="metric"><div class="metric-label">Year to date</div><div class="metric-value" style="font-size:16px">'+chg(ytdDollar,ytdPct)+'</div><div class="metric-sub">'+(firstThisYear?'From '+firstThisYear.snapshot_date:'No data for '+thisYear)+'</div></div>'
+    +'<div class="metric"><div class="metric-label">vs Prior year</div><div class="metric-value" style="font-size:16px">'+chg(pyDollar,pyPct)+'</div><div class="metric-sub">'+(lastOfLastYear?'From end of '+lastYear:'No data for '+lastYear)+'</div></div>'
+    +'</div>'
+    +'<div class="metrics" style="margin-bottom:20px">'
+    +'<div class="metric"><div class="metric-label">5-year growth</div><div class="metric-value" style="font-size:16px">'+chg(fiveDollar,fivePct)+'</div><div class="metric-sub">'+(fiveSnap?'From '+fiveSnap.snapshot_date:'Need data from '+fiveYearsAgo)+'</div></div>'
+    +'<div class="metric"><div class="metric-label">Admin fees this year</div><div class="metric-value" style="font-size:16px;color:var(--red)">'+fmt(feesThisYear)+'</div><div class="metric-sub">'+invFees.filter(f=>f.fee_date.startsWith(thisYear+'')).length+' charges in '+thisYear+'</div></div>'
+    +'<div class="metric"></div><div class="metric"></div>'
+    +'</div>'
+
+    // ── Quarterly snapshots ────────────────────────────
+    +'<div class="panel" style="margin-bottom:16px">'
+    +'<div class="panel-header"><span class="panel-title">Quarterly balance snapshots</span>'
+    +(isAdmin()?'<button class="btn btn-primary btn-sm" onclick="openAddSnapshot()">+ Add snapshot</button>':'')
+    +'</div>'
+    +(invSnapshots.length
+      ?'<table><thead><tr><th>Date</th><th>Balance</th><th>Change from previous</th><th>Note</th>'+(isAdmin()?'<th></th>':'')+'</tr></thead><tbody>'+snapRows+'</tbody></table>'
+      :'<div class="empty">No snapshots yet. Add your first quarterly balance.</div>')
+    +'</div>'
+
+    // ── Admin fees ─────────────────────────────────────
+    +'<div class="panel">'
+    +'<div class="panel-header"><span class="panel-title">Admin fee charges</span>'
+    +(isAdmin()?'<button class="btn btn-primary btn-sm" onclick="openAddFee()">+ Charge fee</button>':'')
+    +'</div>'
+    +(invFees.length
+      ?'<table><thead><tr><th>Date</th><th>Amount</th><th>Note</th>'+(isAdmin()?'<th></th>':'')+'</tr></thead><tbody>'+feeRows+'</tbody></table>'
+      :'<div class="empty">No admin fees recorded yet.</div>')
+    +'</div>';
+}
+
+function openAddSnapshot(){
+  showModal(''
+    +'<div class="mh"><span class="mt">Add quarterly snapshot</span><button class="mx" onclick="closeModal()">x</button></div>'
+    +'<div class="mb">'
+    +'<div class="info">Record the total investment fund balance as of the end of the quarter.</div>'
+    +'<div class="form-row"><label class="lbl">Snapshot date</label><input type="date" class="inp" id="snap-date" value="'+today()+'"></div>'
+    +'<div class="form-row"><label class="lbl">Total balance ($)</label><input type="number" class="inp" id="snap-bal" placeholder="e.g. 4250000.00" step="0.01" min="0"></div>'
+    +'<div class="form-row"><label class="lbl">Note (optional)</label><input type="text" class="inp" id="snap-note" placeholder="e.g. Q1 2026 — RBC statement"></div>'
+    +'</div>'
+    +'<div class="mf"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveSnapshot()">Save snapshot</button></div>'
+  );
+}
+
+async function saveSnapshot(){
+  const date=ge('snap-date').value;
+  const bal=parseFloat(ge('snap-bal').value);
+  const note=ge('snap-note').value.trim();
+  if(!date||isNaN(bal)||bal<0){alert('Please enter a valid date and balance.');return;}
+  setSyncing(true);
+  try{
+    const{data,error}=await sb.from('investment_snapshots').insert({snapshot_date:date,balance:r2(bal),note:note||null,created_by:currentUser.email}).select().single();
+    if(error)throw error;
+    invSnapshots.unshift(data);
+    closeModal();renderInvestmentPage();toast('Snapshot saved.','ok');
+  }catch(e){toast('Error: '+e.message,'error');}
+  setSyncing(false);
+}
+
+async function deleteSnapshot(id){
+  if(!isAdmin())return;
+  if(!confirm('Delete this snapshot? This cannot be undone.'))return;
+  setSyncing(true);
+  try{
+    const{error}=await sb.from('investment_snapshots').delete().eq('id',id);
+    if(error)throw error;
+    invSnapshots=invSnapshots.filter(s=>s.id!==id);
+    renderInvestmentPage();toast('Snapshot deleted.','ok');
+  }catch(e){toast('Error: '+e.message,'error');}
+  setSyncing(false);
+}
+
+function openAddFee(){
+  showModal(''
+    +'<div class="mh"><span class="mt">Charge admin fee</span><button class="mx" onclick="closeModal()">x</button></div>'
+    +'<div class="mb">'
+    +'<div class="info">This fee is charged against the investment fund surplus and will appear on the consolidated report.</div>'
+    +'<div class="form-row"><label class="lbl">Fee date</label><input type="date" class="inp" id="fee-date" value="'+today()+'"></div>'
+    +'<div class="form-row"><label class="lbl">Amount ($)</label><input type="number" class="inp" id="fee-amt" placeholder="e.g. 10000.00" step="0.01" min="0" value="10000.00"></div>'
+    +'<div class="form-row"><label class="lbl">Note</label><input type="text" class="inp" id="fee-note" placeholder="e.g. Q1 2026 admin fee"></div>'
+    +'</div>'
+    +'<div class="mf"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveFee()">Charge fee</button></div>'
+  );
+}
+
+async function saveFee(){
+  const date=ge('fee-date').value;
+  const amt=parseFloat(ge('fee-amt').value);
+  const note=ge('fee-note').value.trim();
+  if(!date||isNaN(amt)||amt<=0){alert('Please enter a valid date and amount.');return;}
+  setSyncing(true);
+  try{
+    const{data,error}=await sb.from('investment_fees').insert({fee_date:date,amount:r2(amt),note:note||null,created_by:currentUser.email}).select().single();
+    if(error)throw error;
+    invFees.unshift(data);
+    closeModal();renderInvestmentPage();toast('Fee charged.','ok');
+  }catch(e){toast('Error: '+e.message,'error');}
+  setSyncing(false);
+}
+
+async function deleteFee(id){
+  if(!isAdmin())return;
+  if(!confirm('Delete this fee entry? This cannot be undone.'))return;
+  setSyncing(true);
+  try{
+    const{error}=await sb.from('investment_fees').delete().eq('id',id);
+    if(error)throw error;
+    invFees=invFees.filter(f=>f.id!==id);
+    renderInvestmentPage();toast('Fee deleted.','ok');
+  }catch(e){toast('Error: '+e.message,'error');}
+  setSyncing(false);
 }
 
 // ── Pages ─────────────────────────────────────────────
