@@ -2075,7 +2075,7 @@ function showPage(name,btn){
   ge('page-'+name).classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   if(btn)btn.classList.add('active');
-  const titles={dashboard:'Dashboard',parishes:'Parishes',transactions:'Transactions',statements:'Statements',consolidated:'Consolidated fund report',investment:'External investment fund',adminfees:'Admin fees',accrual:'Daily accrual',accruallog:'Accrual log',correction:'Interest correction',approvals:'Change requests',users:'User management',import:'Import data',setup:'Setup & backups'};
+  const titles={dashboard:'Dashboard',account:'Account settings',parishes:'Parishes',transactions:'Transactions',statements:'Statements',consolidated:'Consolidated fund report',investment:'External investment fund',adminfees:'Admin fees',accrual:'Daily accrual',accruallog:'Accrual log',correction:'Interest correction',approvals:'Change requests',users:'User management',import:'Import data',setup:'Setup & backups'};
   const t=ge('page-title');if(t)t.textContent=titles[name]||name;
   if(name==='statements')populateStmt();
   if(name==='consolidated')renderConsolidated();
@@ -2089,6 +2089,7 @@ function showPage(name,btn){
   if(name==='users')loadUsers();
   if(name==='import')renderImport();
   if(name==='setup')renderSetupPage();
+  if(name==='account')renderAccountPage();
 }
 
 // ── Toast ─────────────────────────────────────────────
@@ -2154,7 +2155,7 @@ function renderApp(){
         <div style="display:flex;gap:8px;align-items:center">
           <div style="display:flex;align-items:center;gap:5px"><span class="sync-dot" id="sync-dot"></span><span class="sync-lbl" id="sync-lbl">Loading…</span></div>
           <span class="role-chip role-${ROLE}">${ROLE}</span>
-          <span class="user-chip">${currentUser?.email||''}</span>
+          <button class="user-chip" onclick="showPage('account',null)" style="cursor:pointer;border:none;text-align:left" title="Account settings">${currentUser?.email||''}</button>
           ${newTxBtn}
           <button class="btn btn-sm" onclick="loadData()" title="Refresh">↺</button>
           <button class="btn btn-sm" onclick="doSignOut()">Sign out</button>
@@ -2243,10 +2244,119 @@ function renderApp(){
         <div class="page" id="page-users"><div id="users-content"></div></div>
         <div class="page" id="page-import"><div id="import-content"></div></div>
         <div class="page" id="page-setup"><div id="setup-content"></div></div>
+        <div class="page" id="page-account"><div id="account-content"></div></div>
       </div>
     </div>
     <div id="modal-container"></div>
   </div>`;
+}
+
+
+// ── Account settings ──────────────────────────────────
+
+function renderAccountPage(){
+  const c=ge('account-content');if(!c)return;
+  const assignedNames=S.assignedParishes.map(id=>{
+    const p=S.parishes.find(x=>x.id===id);
+    return p?(p.parish_number?'['+p.parish_number+'] ':'')+p.name:null;
+  }).filter(Boolean);
+
+  c.innerHTML=''
+    // Profile card
+    +'<div class="panel" style="margin-bottom:16px">'
+    +'<div class="panel-header"><span class="panel-title">Your profile</span></div>'
+    +'<div style="padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:16px">'
+    +'<div><div class="lbl">Email address</div><div style="font-size:13px;margin-top:4px">'+( currentUser?.email||'')+'</div></div>'
+    +'<div><div class="lbl">Role</div><div style="margin-top:4px"><span class="role-chip role-'+ROLE+'">'+ROLE+'</span></div></div>'
+    +(isParish()&&assignedNames.length
+      ?'<div style="grid-column:1/-1"><div class="lbl">Assigned parishes</div><div style="font-size:12px;margin-top:6px;display:flex;flex-wrap:wrap;gap:6px">'+assignedNames.map(n=>'<span style="background:var(--bg);border:.5px solid var(--border);border-radius:var(--radius);padding:3px 10px;font-size:11px">'+n+'</span>').join('')+'</div></div>'
+      :'')
+    +'</div>'
+    +'</div>'
+
+    // Change password card
+    +'<div class="panel" style="margin-bottom:16px">'
+    +'<div class="panel-header"><span class="panel-title">Change password</span></div>'
+    +'<div style="padding:20px;max-width:400px">'
+    +'<div class="form-row"><label class="lbl">New password</label><input type="password" class="inp" id="new-pass" placeholder="At least 6 characters" autocomplete="new-password"></div>'
+    +'<div class="form-row"><label class="lbl">Confirm new password</label><input type="password" class="inp" id="confirm-pass" placeholder="Repeat new password" autocomplete="new-password"></div>'
+    +'<div id="pass-msg" style="margin-bottom:12px"></div>'
+    +'<button class="btn btn-primary" onclick="submitChangePassword()">Update password</button>'
+    +'</div>'
+    +'</div>'
+
+    // Dashboard preferences card
+    +'<div class="panel">'
+    +'<div class="panel-header"><span class="panel-title">Dashboard preferences</span></div>'
+    +'<div style="padding:20px">'
+    +'<div style="font-size:13px;color:var(--muted);margin-bottom:12px">Choose which charts appear on your dashboard. Your preferences are saved automatically.</div>'
+    +WIDGET_DEFS.map(w=>{
+      const on=dashWidgets.includes(w.id);
+      return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:.5px solid var(--border)">'
+        +'<div style="display:flex;align-items:center;gap:10px">'
+        +'<span style="font-size:18px">'+w.icon+'</span>'
+        +'<div><div style="font-size:13px;font-weight:500">'+w.label+'</div>'
+        +'<div style="font-size:11px;color:var(--muted)">'+w.desc+'</div></div>'
+        +'</div>'
+        +'<button id="widget-btn-'+w.id+'" class="btn btn-sm'+(on?' btn-primary':'')+'" onclick="toggleWidgetFromAccount(\''+w.id+'\')">'+( on?'On':'Off')+'</button>'
+        +'</div>';
+    }).join('')
+    +'</div>'
+    +'</div>';
+}
+
+function toggleWidgetFromAccount(id){
+  toggleWidget(id);
+  // Update the button state in place without full re-render
+  const btn=ge('widget-btn-'+id);
+  if(btn){
+    const on=dashWidgets.includes(id);
+    btn.className='btn btn-sm'+(on?' btn-primary':'');
+    btn.textContent=on?'On':'Off';
+  }
+}
+
+async function submitChangePassword(){
+  const np=ge('new-pass').value;
+  const cp=ge('confirm-pass').value;
+  const msg=ge('pass-msg');
+  if(!np||np.length<6){
+    msg.innerHTML='<div class="warn">Password must be at least 6 characters.</div>';return;
+  }
+  if(np!==cp){
+    msg.innerHTML='<div class="warn">Passwords do not match.</div>';return;
+  }
+  msg.innerHTML='<div style="font-size:12px;color:var(--muted)">Updating...</div>';
+  try{
+    const{error}=await sb.auth.updateUser({password:np});
+    if(error)throw error;
+    msg.innerHTML='<div class="ok">Password updated successfully.</div>';
+    ge('new-pass').value='';
+    ge('confirm-pass').value='';
+  }catch(e){
+    msg.innerHTML='<div class="warn">Error: '+e.message+'</div>';
+  }
+}
+
+async function submitForgotPassword(){
+  const email=ge('si-email')?.value?.trim();
+  if(!email){
+    showAuthErr('Please enter your email address first, then click Forgot your password.');
+    return;
+  }
+  try{
+    const{error}=await sb.auth.resetPasswordForEmail(email,{
+      redirectTo:'https://andrewjjardine-lang.github.io/buildingandloan/'
+    });
+    if(error)throw error;
+    showAuthErr('');
+    ge('auth-err').style.display='block';
+    ge('auth-err').style.background='var(--green-lt)';
+    ge('auth-err').style.color='var(--green)';
+    ge('auth-err').textContent='Password reset email sent to '+email+'. Check your inbox.';
+  }catch(e){
+    showAuthErr(e.message);
+  }
 }
 
 // ── Auth screen ───────────────────────────────────────
@@ -2261,6 +2371,7 @@ function renderAuth(){
       <div class="form-row"><label class="lbl">Password</label><input class="inp" type="password" id="si-pass" placeholder="••••••••" autocomplete="current-password"
         onkeydown="if(event.key==='Enter')submitSignIn()"></div>
       <button class="btn btn-primary" style="width:100%;padding:10px;font-size:13px;margin-top:4px" onclick="submitSignIn()">Sign in</button>
+      <div style="text-align:center;margin-top:12px"><button onclick="submitForgotPassword()" style="background:none;border:none;color:var(--blue);font-size:12px;cursor:pointer;font-family:inherit">Forgot your password?</button></div>
       <div style="margin-top:20px;padding-top:16px;border-top:.5px solid var(--border);font-size:11px;color:var(--hint);text-align:center">Accounts are created by your administrator</div>
     </div>
   </div>`;
