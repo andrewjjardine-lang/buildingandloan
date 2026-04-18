@@ -786,7 +786,7 @@ function openWidgetPicker(){
       +'<div><div style="font-size:13px;font-weight:500">'+w.label+'</div>'
       +'<div style="font-size:11px;color:var(--muted)">'+w.desc+'</div></div>'
       +'</div>'
-      +'<button class="btn btn-sm'+(on?' btn-primary':'')+'" onclick="toggleWidget(\''+w.id+'\');this.className=\'btn btn-sm\'+(dashWidgets.includes(\''+w.id+'\')?\" btn-primary\":\"\");closeModal();openWidgetPicker();">'
+      +'<button id="wpick-'+w.id+'" class="btn btn-sm'+(on?' btn-primary':'')+'" onclick="toggleWidgetInPicker(\''+ w.id +'\')">'
       +(on?'On':'Off')+'</button>'
       +'</div>';
   }).join('');
@@ -795,6 +795,16 @@ function openWidgetPicker(){
     +'<div class="mb">'+rows+'</div>'
     +'<div class="mf"><button class="btn btn-primary" onclick="closeModal()">Done</button></div>'
   );
+}
+
+function toggleWidgetInPicker(id){
+  toggleWidget(id);
+  var on=dashWidgets.includes(id);
+  var btn=document.getElementById('wpick-'+id);
+  if(btn){
+    btn.className='btn btn-sm'+(on?' btn-primary':'');
+    btn.textContent=on?'On':'Off';
+  }
 }
 
 function renderDashboardCharts(){
